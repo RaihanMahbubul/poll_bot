@@ -1,4 +1,3 @@
-
 import telegram
 from telegram.ext import (
     Application, 
@@ -107,14 +106,36 @@ def save_target_channel_to_db(user_id: int, target_channel: str):
 
 # --- জেমিনি এআই কনফিগারেশন গ্লোবাল স্কোপ থেকে সরানো হয়েছে ---
 
-# AI দিয়ে প্রশ্ন জেনারেট করার ফাংশন (পরিবর্তন নেই)
+# AI দিয়ে প্রশ্ন জেনারেট করার ফাংশন (আপডেটেড)
 def get_questions_from_ai(text, ai_model): # <-- নতুন: ai_model এখানে পাস করা হচ্ছে
     prompt = f"""
-    তুমি একজন দক্ষ টেলিগ্রাম বট। ... (আপনার বাকি প্রম্পট এখানে) ...
+    তুমি একজন দক্ষ টেলিগ্রাম বট। তোমার কাজ হলো নিচের টেক্সট থেকে শুধুমাত্র মাল্টিপল চয়েস প্রশ্ন (MCQ) বের করা।
+    তোমার উত্তর অবশ্যই একটি JSON লিস্ট ফরম্যাটে হতে হবে। প্রতিটি অবজেক্টে ৪টি কী থাকবে:
+    1. "question": (স্ট্রিং) প্রশ্নটি।
+    2. "options": (লিস্ট) অপশনগুলোর লিস্ট (সর্বোচ্চ ১০টি)।
+    3. "correct_option_index": (সংখ্যা) সঠিক অপশনের ইনডেক্স (0 থেকে শুরু)।
+    4. "explanation": (স্ট্রিং) সঠিক উত্তরের একটি সংক্ষিপ্ত ব্যাখ্যা। যদি ব্যাখ্যা খুঁজে না পাও, তবে এর মান `null` দাও।
+
     টেক্সট:
     ---
     {text}
     ---
+    
+    JSON আউটপুট উদাহরণ:
+    [
+      {{
+        "question": "বাংলাদেশের রাজধানীর নাম কি?",
+        "options": ["ঢাকা", "চট্টগ্রাম", "খুলনা", "রাজশাহী"],
+        "correct_option_index": 0,
+        "explanation": "ঢাকা বাংলাদেশের রাজধানী ও বৃহত্তম শহর।"
+      }},
+      {{
+        "question": "সূর্য কোন দিকে ওঠে?",
+        "options": ["উত্তর", "দক্ষিণ", "পূর্ব", "পশ্চিম"],
+        "correct_option_index": 2,
+        "explanation": null
+      }}
+    ]
     """
     try:
         response = ai_model.generate_content(prompt)
@@ -272,11 +293,9 @@ def main():
     print("বট চালু হচ্ছে...")
     
     # ---!!! পরিবর্তন: ভেরিয়েবলগুলো এখন এখানে লোড হচ্ছে !!!---
-    # -----------------------------------------------------------------
-# --- আপনার টোকেন এবং কী পরিবেশ থেকে লোড হবে ---
-    TELEGRAM_BOT_TOKEN = os.environ.get("T8433405847:AAFwxcEPofbRkZ8QLRF8SpLn4hbF-pPluG8")
-    GEMINI_API_KEY = os.environ.get("AIzaSyAVwCdnIDqK7bOwWbvSBK_UJCf6Ui3jA6Q")
-    DATABASE_URL = os.environ.get("postgresql://poll_bot_db_user:dYb9wICOkT6ulSFLwK2AWSDBTNhQOdgu@dpg-d3trgpqli9vc73bkq9pg-a/poll_bot_db") # এটি শুধু init_db() এর জন্য
+    TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    DATABASE_URL = os.environ.get("DATABASE_URL") # এটি শুধু init_db() এর জন্য
 
     # --- ভেরিয়েবল চেক ---
     if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY or not DATABASE_URL:
