@@ -6,15 +6,16 @@ from telegram.ext import (
     MessageHandler, 
     filters, 
     ContextTypes,
-    # PicklePersistence বাদ দেওয়া হয়েছে
 )
 from telegram.ext._jobqueue import Job
 import google.generativeai as genai
 import json
 import asyncio
-import os # <-- নতুন ইম্পোর্ট
-import psycopg2 # <-- নতুন ইম্পোর্ট
-from urllib.parse import urlparse # <-- নতুন ইম্পোর্ট
+import os
+import psycopg2
+from urllib.parse import urlparse
+from flask import Flask         # <-- নতুন ইম্পোর্ট
+import threading              # <-- নতুন ইম্পোর্ট
 
 # -----------------------------------------------------------------
 # --- আপনার টোকেন এবং কী পরিবেশ থেকে লোড হবে ---
@@ -28,9 +29,25 @@ DATABASE_URL = os.environ.get("postgresql://poll_bot_db_user:dYb9wICOkT6ulSFLwK2
 STATE_IDLE, STATE_AWAITING_INTRO = range(2)
 TEXT_BUFFER_DELAY = 3  # সেকেন্ড
 
-# --- নতুন ফাংশন: ডাটাবেস কানেকশন ---
+# --- নতুন: Flask ওয়েব সার্ভার সেটআপ ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    """এটি UptimeRobot-কে দেখাবে যে বটটি সচল আছে।"""
+    return "I am alive and polling!"
+
+def run_web_server():
+    """Flask সার্ভারটি চালু করে।"""
+    # Render স্বয়ংক্রিয়ভাবে PORT এনভায়রনমেন্ট ভেরিয়েবল সেট করে।
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+
+# ---------------------------------------
+
+# --- (ডাটাবেস এবং AI ফাংশনগুলো অপরিবর্তিত) ---
+
 def get_db_connection():
-    """Render-এর DATABASE_URL থেকে কানেকশন তৈরি করে।"""
     try:
         conn = psycopg2.connect(DATABASE_URL)
         return conn
@@ -38,17 +55,13 @@ def get_db_connection():
         print(f"ডাটাবেস কানেকশনে সমস্যা: {e}")
         return None
 
-# --- নতুন ফাংশন: ডাটাবেস টেবিল তৈরি ---
 def init_db():
-    """বট চালু হওয়ার সময় এই ফাংশন ডাটাবেস টেবিল তৈরি করবে।"""
     conn = get_db_connection()
     if conn is None:
         print("ডাটাবেস ইনিশিয়ালাইজ করা যাচ্ছে না।")
         return
-        
     try:
         with conn.cursor() as cur:
-            # user_id কে PRIMARY KEY হিসেবে ব্যবহার করা হচ্ছে
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS user_settings (
                     user_id BIGINT PRIMARY KEY,
@@ -62,17 +75,15 @@ def init_db():
     finally:
         conn.close()
 
-# --- নতুন ফাংশন: ডাটাবেস থেকে চ্যানেল আইডি পড়া ---
 def get_target_channel_from_db(user_id: int) -> str | None:
     conn = get_db_connection()
     if conn is None: return None
-    
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT target_channel FROM user_settings WHERE user_id = %s", (user_id,))
             result = cur.fetchone()
             if result:
-                return result[0] # target_channel
+                return result[0]
             return None
     except Exception as e:
         print(f"চ্যানেল আইডি পড়াতে সমস্যা: {e}")
@@ -80,14 +91,11 @@ def get_target_channel_from_db(user_id: int) -> str | None:
     finally:
         conn.close()
 
-# --- নতুন ফাংশন: ডাটাবেসে চ্যানেল আইডি সেভ করা ---
 def save_target_channel_to_db(user_id: int, target_channel: str):
     conn = get_db_connection()
     if conn is None: return
-
     try:
         with conn.cursor() as cur:
-            # ON CONFLICT... (UPSERT): যদি ইউজার আইডি আগে থেকেই থাকে, তবে আপডেট করো, না থাকলে নতুন করে ইনসার্ট করো।
             cur.execute("""
                 INSERT INTO user_settings (user_id, target_channel)
                 VALUES (%s, %s)
@@ -99,7 +107,6 @@ def save_target_channel_to_db(user_id: int, target_channel: str):
     finally:
         conn.close()
 
-# জেমিনি এআই কনফিগার করুন
 try:
     genai.configure(api_key=GEMINI_API_KEY)
     generation_config = genai.GenerationConfig(response_mime_type="application/json")
@@ -108,7 +115,6 @@ try:
 except Exception as e:
     print(f"Gemini AI কনফিগারেশনে সমস্যা: {e}")
 
-# AI দিয়ে প্রশ্ন জেনারেট করার ফাংশন (পরিবর্তন নেই)
 def get_questions_from_ai(text):
     prompt = f"""
     তুমি একজন দক্ষ টেলিগ্রাম বট। তোমার কাজ হলো নিচের টেক্সট থেকে শুধুমাত্র মাল্টিপল চয়েস প্রশ্ন (MCQ) বের করা।
@@ -133,7 +139,6 @@ def get_questions_from_ai(text):
         print(f"AI বা JSON পার্সিং-এ অজানা সমস্যা: {e}") 
         return None
 
-# টুল ফাংশন: স্টেট রিসেট করার জন্য (পরিবর্তন নেই)
 def clear_user_state(user_data: dict):
     user_data['CONV_STATE'] = STATE_IDLE
     if 'pending_quiz_data' in user_data: del user_data['pending_quiz_data']
@@ -144,7 +149,6 @@ def clear_user_state(user_data: dict):
     if 'text_buffer' in user_data: del user_data['text_buffer']
 
 
-# /start কমান্ড হ্যান্ডলার (পরিবর্তন নেই)
 async def start_command(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     clear_user_state(context.user_data)
     await update.message.reply_text(
@@ -152,69 +156,49 @@ async def start_command(update: telegram.Update, context: ContextTypes.DEFAULT_T
         "পোস্ট করার আগে, অনুগ্রহ করে /setchannel কমান্ড দিয়ে টার্গেট চ্যানেল সেট করুন।"
     )
 
-# /setchannel কমান্ড হ্যান্ডলার (আপডেটেড)
 async def set_channel(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     clear_user_state(context.user_data)
-    
     if not context.args:
         await update.message.reply_text("⚠️ ব্যবহার: /setchannel <channel_id_or_@username>")
         return
-        
     target_channel = context.args[0]
-    
-    # --- পরিবর্তন: ডাটাবেসে সেভ করা ---
     save_target_channel_to_db(user_id, target_channel)
-    
     await update.message.reply_text(
         f"✅ টার্গেট চ্যানেল সফলভাবে সেট করা হয়েছে: {target_channel}\n"
         "(এই সেটিংটি এখন স্থায়ীভাবে সেভ থাকবে)"
     )
 
-# /cancel কমান্ড হ্যান্ডলার (পরিবর্তন নেই)
 async def cancel_quiz(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     clear_user_state(context.user_data)
     await update.message.reply_text("বর্তমান কাজটি বাতিল করা হয়েছে। আপনি নতুন প্রশ্ন পাঠাতে পারেন।")
 
 
-# টাইমার শেষ হলে এই ফাংশনটি রান হবে (আপডেটেড)
 async def process_buffered_text(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
     chat_id = job_data['chat_id']
     user_id = job_data['user_id']
-    
-    # user_data সরাসরি context.user_data দিয়ে পাওয়া যাবে না
     user_data = context.application.user_data[user_id] 
-
-    # --- পরিবর্তন: ডাটাবেস থেকে চ্যানেল আইডি পড়া ---
     target_channel = get_target_channel_from_db(user_id)
     if not target_channel:
         await context.bot.send_message(chat_id=chat_id, text="⚠️ টার্গেট চ্যানেল সেট করা নেই। /setchannel ব্যবহার করুন।")
         clear_user_state(user_data)
         return
-
     full_text = "\n".join(user_data.get('text_buffer', []))
-    
     if 'buffer_job' in user_data: del user_data['buffer_job']
     if 'text_buffer' in user_data: del user_data['text_buffer']
-        
     if not full_text:
         await context.bot.send_message(chat_id=chat_id, text="⚠️ টেক্সট খুঁজে পাওয়া যায়নি।")
         clear_user_state(user_data)
         return
-
     await context.bot.send_message(chat_id=chat_id, text=f"সম্পূর্ণ টেক্সট পেয়েছি ({len(full_text)} অক্ষর)। জেমিনি এআই দিয়ে প্রসেস করছি... 🤖")
-    
     questions_data = get_questions_from_ai(full_text)
-    
     if not questions_data or not isinstance(questions_data, list) or len(questions_data) == 0:
         await context.bot.send_message(chat_id=chat_id, text="দুঃখিত, AI প্রশ্ন তৈরি করতে ব্যর্থ হয়েছে বা কোনো প্রশ্ন খুঁজে পায়নি।")
         clear_user_state(user_data)
         return
-    
     user_data['pending_quiz_data'] = questions_data
     user_data['CONV_STATE'] = STATE_AWAITING_INTRO 
-    
     await context.bot.send_message(
         chat_id=chat_id, 
         text=f"✅ {len(questions_data)} টি প্রশ্ন সফলভাবে প্রসেস করা হয়েছে।\n\n"
@@ -222,30 +206,21 @@ async def process_buffered_text(context: ContextTypes.DEFAULT_TYPE):
              "(অথবা /cancel লিখে বাতিল করুন)"
     )
 
-
-# টেক্সট মেসেজ হ্যান্ডলার (আপডেটেড)
 async def handle_text(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     chat_id = update.message.chat_id
     user = update.effective_user
-    
     current_state = context.user_data.get('CONV_STATE', STATE_IDLE)
     
-    # --- ধাপ ১: যদি বট সূচনার জন্য অপেক্ষা করে ---
     if current_state == STATE_AWAITING_INTRO:
-        
         intro_text = user_message
-        # --- পরিবর্তন: ডাটাবেস থেকে চ্যানেল আইডি পড়া ---
         target_channel = get_target_channel_from_db(user.id)
         questions_data = context.user_data.get('pending_quiz_data')
-        
         if not target_channel or not questions_data:
             await context.bot.send_message(chat_id=chat_id, text="⚠️ একটি ত্রুটি হয়েছে। অনুগ্রহ করে /cancel করে আবার শুরু করুন।")
             clear_user_state(context.user_data)
             return
-
         await context.bot.send_message(chat_id=chat_id, text=f" সূচনা বার্তা পেয়েছি। '{target_channel}'-এ পোস্ট করা হচ্ছে...")
-
         count = 0
         errors = 0
         try:
@@ -270,32 +245,22 @@ async def handle_text(update: telegram.Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_message(chat_id=chat_id, text=f"⚠️ চ্যানেল '{target_channel}'-এ পোস্ট করতে মারাত্মক সমস্যা হয়েছে: {e}")
             clear_user_state(context.user_data)
             return
-
         clear_user_state(context.user_data)
         feedback_message = f"সফলভাবে চ্যানেল '{target_channel}'-এ {count} টি পোল পোস্ট করা হয়েছে!"
         if errors > 0: feedback_message += f"\n{errors} টি পোস্টে সমস্যা হয়েছে।"
         await context.bot.send_message(chat_id=chat_id, text=feedback_message)
 
-    
-    # --- ধাপ ২: যদি বট নতুন প্রশ্নের জন্য অপেক্ষা করে (IDLE) ---
     elif current_state == STATE_IDLE:
-        
-        # --- পরিবর্তন: ডাটাবেস থেকে চ্যানেল আইডি পড়া ---
         target_channel = get_target_channel_from_db(user.id)
         if not target_channel:
             await context.bot.send_message(chat_id=chat_id, text="⚠️ টার্গেট চ্যানেল সেট করা নেই। /setchannel ব্যবহার করুন।")
             return
-
-        # (বাকি বাফারিং লজিক পরিবর্তন হয়নি)
         if 'text_buffer' not in context.user_data:
             context.user_data['text_buffer'] = []
             await context.bot.send_message(chat_id=chat_id, text="টেক্সট পেয়েছি... (আরও টেক্সট এলে সেগুলোর জন্য ৩ সেকেন্ড অপেক্ষা করছি)")
-        
         if 'buffer_job' in context.user_data:
             context.user_data['buffer_job'].remove()
-            
         context.user_data['text_buffer'].append(user_message)
-        
         new_job = context.job_queue.run_once(
             process_buffered_text, 
             TEXT_BUFFER_DELAY, 
@@ -304,34 +269,34 @@ async def handle_text(update: telegram.Update, context: ContextTypes.DEFAULT_TYP
         )
         context.user_data['buffer_job'] = new_job
 
-# বট চালু করার মেইন ফাংশন (আপডেটেড)
+# বট চালু করার মেইন ফাংশন
 def main():
-    # --- ভেরিয়েবল চেক ---
     if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY or not DATABASE_URL:
         print("---!!! ERROR: টোকেন বা এপিআই কী সেট করা হয়নি !!!---")
-        print("অনুগ্রহ করে TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, এবং DATABASE_URL এনভায়রনমেন্ট ভেরিয়েবল সেট করুন।")
         return
-
     print("বট চালু হচ্ছে...")
-    
-    # --- নতুন: ডাটাবেস চালু করা ---
     init_db()
 
-    # --- PicklePersistence মুছে ফেলা হয়েছে ---
     application = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
-        # .persistence(persistence) - এটি আর নেই
         .build()
     )
 
-    # হ্যান্ডলার (পরিবর্তন নেই)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("setchannel", set_channel))
     application.add_handler(CommandHandler("cancel", cancel_quiz))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    print("বট সফলভাবে চালু হয়েছে এবং মেসেজের জন্য অপেক্ষা করছে...")
+    print("টেলিগ্রাম বট পোলিং শুরু করছে...")
+    
+    # --- নতুন: Flask সার্ভারটি একটি আলাদা থ্রেডে চালু করা ---
+    web_thread = threading.Thread(target=run_web_server)
+    web_thread.daemon = True # বট বন্ধ হলে থ্রেডটিও যেন বন্ধ হয়ে যায়
+    web_thread.start()
+    print("ওয়েব সার্ভার চালু হয়েছে (বটকে জাগিয়ে রাখার জন্য)।")
+    # -----------------------------------------------------
+    
     application.run_polling()
 
 if __name__ == "__main__":
