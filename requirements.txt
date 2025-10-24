@@ -1,3 +1,4 @@
 python-telegram-bot[job-queue]
 google-generativeai
 psycopg2-binary
+Flask
