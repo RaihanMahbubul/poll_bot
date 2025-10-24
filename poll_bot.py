@@ -270,19 +270,42 @@ async def handle_text(update: telegram.Update, context: ContextTypes.DEFAULT_TYP
         context.user_data['buffer_job'] = new_job
 
 # বট চালু করার মেইন ফাংশন
+# বট চালু করার মেইন ফাংশন (আপডেটেড)
 def main():
+    
+    # ---!!! নতুন ডায়াগনস্টিক টেস্ট !!!---
+    print("--- poll_bot.py ডায়াগনস্টিক টেস্ট শুরু ---")
+    token_check = os.environ.get("TELEGRAM_BOT_TOKEN")
+    gemini_check = os.environ.get("GEMINI_API_KEY")
+    db_check = os.environ.get("DATABASE_URL")
+    
+    print(f"TELEGRAM_BOT_TOKEN (চেক): {token_check}")
+    print(f"GEMINI_API_KEY (চেক): {gemini_check}")
+    print(f"DATABASE_URL (চেক): {db_check}")
+    print("--- poll_bot.py ডায়াগনস্টিক টেস্ট শেষ ---")
+    # ---!!! টেস্ট শেষ !!!---
+
+
+    # --- ভেরিয়েবল চেক (আগের কোড) ---
     if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY or not DATABASE_URL:
-        print("---!!! ERROR: টোকেন বা এপিআই কী সেট করা হয়নি !!!---")
+        print("---!!! ERROR: টোকেন বা এপিআই কী সেট করা হয়নি !!!---")
+        print("(উপরের ডায়াগনস্টিক টেস্ট দেখুন কোনটি 'None' দেখাচ্ছে)")
         return
+
     print("বট চালু হচ্ছে...")
+    
+    # --- নতুন: ডাটাবেস চালু করা ---
     init_db()
 
+    # --- PicklePersistence মুছে ফেলা হয়েছে ---
     application = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
+        # .persistence(persistence) - এটি আর নেই
         .build()
     )
 
+    # হ্যান্ডলার (পরিবর্তন নেই)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("setchannel", set_channel))
     application.add_handler(CommandHandler("cancel", cancel_quiz))
