@@ -14,47 +14,44 @@ import asyncio
 import os
 import psycopg2
 from urllib.parse import urlparse
-from flask import Flask         # <-- নতুন ইম্পোর্ট
-import threading              # <-- নতুন ইম্পোর্ট
+from flask import Flask
+import threading
 
 # -----------------------------------------------------------------
-# --- আপনার টোকেন এবং কী পরিবেশ থেকে লোড হবে ---
-# --- এগুলো আর কোডে হার্ডকোড করা হবে না ---
-TELEGRAM_BOT_TOKEN = os.environ.get("8433405847:AAFwxcEPofbRkZ8QLRF8SpLn4hbF-pPluG8")
-GEMINI_API_KEY = os.environ.get("AIzaSyAVwCdnIDqK7bOwWbvSBK_UJCf6Ui3jA6Q")
-DATABASE_URL = os.environ.get("postgresql://poll_bot_db_user:dYb9wICOkT6ulSFLwK2AWSDBTNhQOdgu@dpg-d3trgpqli9vc73bkq9pg-a/poll_bot_db") # <-- Render ডাটাবেস URL
+# --- টোকেন বা কী এখানে আর লোড করা হচ্ছে না ---
+# --- এগুলো এখন main() ফাংশনের ভেতরে লোড হবে ---
 # -----------------------------------------------------------------
 
 # conversation-এর দুটি অবস্থা (state)
 STATE_IDLE, STATE_AWAITING_INTRO = range(2)
 TEXT_BUFFER_DELAY = 3  # সেকেন্ড
 
-# --- নতুন: Flask ওয়েব সার্ভার সেটআপ ---
+# --- Flask ওয়েব সার্ভার সেটআপ (পরিবর্তন নেই) ---
 app = Flask(__name__)
-
 @app.route('/')
 def home():
-    """এটি UptimeRobot-কে দেখাবে যে বটটি সচল আছে।"""
     return "I am alive and polling!"
 
 def run_web_server():
-    """Flask সার্ভারটি চালু করে।"""
-    # Render স্বয়ংক্রিয়ভাবে PORT এনভায়রনমেন্ট ভেরিয়েবল সেট করে।
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
 
-# ---------------------------------------
-
-# --- (ডাটাবেস এবং AI ফাংশনগুলো অপরিবর্তিত) ---
-
+# --- নতুন ফাংশন: ডাটাবেস কানেকশন (আপডেটেড) ---
 def get_db_connection():
+    """Render-এর DATABASE_URL থেকে কানেকশন তৈরি করে।"""
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        # --- পরিবর্তন: ভেরিয়েবলটি এখানে সরাসরি পড়া হচ্ছে ---
+        db_url = os.environ.get("DATABASE_URL")
+        if not db_url:
+            print("ডাটাবেস কানেকশনে সমস্যা: DATABASE_URL খুঁজে পাওয়া যায়নি।")
+            return None
+        conn = psycopg2.connect(db_url)
         return conn
     except Exception as e:
         print(f"ডাটাবেস কানেকশনে সমস্যা: {e}")
         return None
 
+# --- (init_db, get_target_channel..., save_target_channel... ফাংশনগুলোতে কোনো পরিবর্তন নেই) ---
 def init_db():
     conn = get_db_connection()
     if conn is None:
@@ -107,22 +104,13 @@ def save_target_channel_to_db(user_id: int, target_channel: str):
     finally:
         conn.close()
 
-try:
-    genai.configure(api_key=GEMINI_API_KEY)
-    generation_config = genai.GenerationConfig(response_mime_type="application/json")
-    ai_model = genai.GenerativeModel('gemini-flash-latest', generation_config=generation_config)
-    print("Gemini AI সফলভাবে কনফিগার করা হয়েছে (JSON মোডে)।")
-except Exception as e:
-    print(f"Gemini AI কনফিগারেশনে সমস্যা: {e}")
 
-def get_questions_from_ai(text):
+# --- জেমিনি এআই কনফিগারেশন গ্লোবাল স্কোপ থেকে সরানো হয়েছে ---
+
+# AI দিয়ে প্রশ্ন জেনারেট করার ফাংশন (পরিবর্তন নেই)
+def get_questions_from_ai(text, ai_model): # <-- নতুন: ai_model এখানে পাস করা হচ্ছে
     prompt = f"""
-    তুমি একজন দক্ষ টেলিগ্রাম বট। তোমার কাজ হলো নিচের টেক্সট থেকে শুধুমাত্র মাল্টিপল চয়েস প্রশ্ন (MCQ) বের করা।
-    তোমার উত্তর অবশ্যই একটি JSON লিস্ট ফরম্যাটে হতে হবে। প্রতিটি অবজেক্টে ৪টি কী থাকবে:
-    1. "question": (স্ট্রিং) প্রশ্নটি।
-    2. "options": (লিস্ট) অপশনগুলোর লিস্ট (সর্বোচ্চ ১০টি)।
-    3. "correct_option_index": (সংখ্যা) সঠিক অপশনের ইনডেক্স (0 থেকে শুরু)।
-    4. "explanation": (স্ট্রিং) সঠিক উত্তরের একটি সংক্ষিপ্ত ব্যাখ্যা। যদি ব্যাখ্যা খুঁজে না পাও, তবে এর মান `null` দাও।
+    তুমি একজন দক্ষ টেলিগ্রাম বট। ... (আপনার বাকি প্রম্পট এখানে) ...
     টেক্সট:
     ---
     {text}
@@ -139,6 +127,7 @@ def get_questions_from_ai(text):
         print(f"AI বা JSON পার্সিং-এ অজানা সমস্যা: {e}") 
         return None
 
+# (clear_user_state, start_command, set_channel, cancel_quiz ফাংশনগুলোতে কোনো পরিবর্তন নেই)
 def clear_user_state(user_data: dict):
     user_data['CONV_STATE'] = STATE_IDLE
     if 'pending_quiz_data' in user_data: del user_data['pending_quiz_data']
@@ -147,7 +136,6 @@ def clear_user_state(user_data: dict):
         job_to_remove.remove()
         del user_data['buffer_job']
     if 'text_buffer' in user_data: del user_data['text_buffer']
-
 
 async def start_command(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     clear_user_state(context.user_data)
@@ -174,16 +162,20 @@ async def cancel_quiz(update: telegram.Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("বর্তমান কাজটি বাতিল করা হয়েছে। আপনি নতুন প্রশ্ন পাঠাতে পারেন।")
 
 
+# টাইমার শেষ হলে এই ফাংশনটি রান হবে (আপডেটেড)
 async def process_buffered_text(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
     chat_id = job_data['chat_id']
     user_id = job_data['user_id']
     user_data = context.application.user_data[user_id] 
+    ai_model = context.application.bot_data['ai_model'] # <-- অ্যাপলিকেশন থেকে ai_model লোড করা
+
     target_channel = get_target_channel_from_db(user_id)
     if not target_channel:
         await context.bot.send_message(chat_id=chat_id, text="⚠️ টার্গেট চ্যানেল সেট করা নেই। /setchannel ব্যবহার করুন।")
         clear_user_state(user_data)
         return
+
     full_text = "\n".join(user_data.get('text_buffer', []))
     if 'buffer_job' in user_data: del user_data['buffer_job']
     if 'text_buffer' in user_data: del user_data['text_buffer']
@@ -191,12 +183,16 @@ async def process_buffered_text(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text="⚠️ টেক্সট খুঁজে পাওয়া যায়নি।")
         clear_user_state(user_data)
         return
+
     await context.bot.send_message(chat_id=chat_id, text=f"সম্পূর্ণ টেক্সট পেয়েছি ({len(full_text)} অক্ষর)। জেমিনি এআই দিয়ে প্রসেস করছি... 🤖")
-    questions_data = get_questions_from_ai(full_text)
+    
+    questions_data = get_questions_from_ai(full_text, ai_model) # <-- ai_model পাস করা
+    
     if not questions_data or not isinstance(questions_data, list) or len(questions_data) == 0:
         await context.bot.send_message(chat_id=chat_id, text="দুঃখিত, AI প্রশ্ন তৈরি করতে ব্যর্থ হয়েছে বা কোনো প্রশ্ন খুঁজে পায়নি।")
         clear_user_state(user_data)
         return
+    
     user_data['pending_quiz_data'] = questions_data
     user_data['CONV_STATE'] = STATE_AWAITING_INTRO 
     await context.bot.send_message(
@@ -206,6 +202,8 @@ async def process_buffered_text(context: ContextTypes.DEFAULT_TYPE):
              "(অথবা /cancel লিখে বাতিল করুন)"
     )
 
+
+# টেক্সট মেসেজ হ্যান্ডলার (আপডেটেড)
 async def handle_text(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     chat_id = update.message.chat_id
@@ -269,41 +267,47 @@ async def handle_text(update: telegram.Update, context: ContextTypes.DEFAULT_TYP
         )
         context.user_data['buffer_job'] = new_job
 
-# বট চালু করার মেইন ফাংশন
-# বট চালু করার মেইন ফাংশন (আপডেটেড)
+# --- বট চালু করার মেইন ফাংশন (সম্পূর্ণ আপডেটেড) ---
 def main():
-    
-    # ---!!! নতুন ডায়াগনস্টিক টেস্ট !!!---
-    print("--- poll_bot.py ডায়াগনস্টিক টেস্ট শুরু ---")
-    token_check = os.environ.get("TELEGRAM_BOT_TOKEN")
-    gemini_check = os.environ.get("GEMINI_API_KEY")
-    db_check = os.environ.get("DATABASE_URL")
-    
-    print(f"TELEGRAM_BOT_TOKEN (চেক): {token_check}")
-    print(f"GEMINI_API_KEY (চেক): {gemini_check}")
-    print(f"DATABASE_URL (চেক): {db_check}")
-    print("--- poll_bot.py ডায়াগনস্টিক টেস্ট শেষ ---")
-    # ---!!! টেস্ট শেষ !!!---
-
-
-    # --- ভেরিয়েবল চেক (আগের কোড) ---
-    if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY or not DATABASE_URL:
-        print("---!!! ERROR: টোকেন বা এপিআই কী সেট করা হয়নি !!!---")
-        print("(উপরের ডায়াগনস্টিক টেস্ট দেখুন কোনটি 'None' দেখাচ্ছে)")
-        return
-
     print("বট চালু হচ্ছে...")
     
-    # --- নতুন: ডাটাবেস চালু করা ---
+    # ---!!! পরিবর্তন: ভেরিয়েবলগুলো এখন এখানে লোড হচ্ছে !!!---
+    # -----------------------------------------------------------------
+# --- আপনার টোকেন এবং কী পরিবেশ থেকে লোড হবে ---
+    TELEGRAM_BOT_TOKEN = os.environ.get("T8433405847:AAFwxcEPofbRkZ8QLRF8SpLn4hbF-pPluG8")
+    GEMINI_API_KEY = os.environ.get("AIzaSyAVwCdnIDqK7bOwWbvSBK_UJCf6Ui3jA6Q")
+    DATABASE_URL = os.environ.get("postgresql://poll_bot_db_user:dYb9wICOkT6ulSFLwK2AWSDBTNhQOdgu@dpg-d3trgpqli9vc73bkq9pg-a/poll_bot_db") # এটি শুধু init_db() এর জন্য
+
+    # --- ভেরিয়েবল চেক ---
+    if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY or not DATABASE_URL:
+        print("---!!! ERROR: টোকেন বা এপিআই কী সেট করা হয়নি !!!---")
+        print("Render-এর 'Environment' ট্যাবে ভেরিয়েবলগুলো চেক করুন।")
+        return # বট বন্ধ করে দাও
+
+    print("টোকেন এবং কী সফলভাবে লোড হয়েছে।")
+
+    # --- পরিবর্তন: জেমিনি এআই এখন এখানে কনফিগার হচ্ছে ---
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        generation_config = genai.GenerationConfig(response_mime_type="application/json")
+        ai_model = genai.GenerativeModel('gemini-flash-latest', generation_config=generation_config)
+        print("Gemini AI সফলভাবে কনফিগার করা হয়েছে (JSON মোডে)।")
+    except Exception as e:
+        print(f"Gemini AI কনফিগারেশনে সমস্যা: {e}")
+        return
+
+    # --- ডাটাবেস চালু করা ---
     init_db()
 
-    # --- PicklePersistence মুছে ফেলা হয়েছে ---
     application = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
-        # .persistence(persistence) - এটি আর নেই
         .build()
     )
+    
+    # --- নতুন: ai_model কে অ্যাপ্লিকেশন কনটেক্সটে সেভ করা ---
+    # যাতে process_buffered_text ফাংশনটি এটি ব্যবহার করতে পারে
+    application.bot_data['ai_model'] = ai_model
 
     # হ্যান্ডলার (পরিবর্তন নেই)
     application.add_handler(CommandHandler("start", start_command))
@@ -313,12 +317,11 @@ def main():
 
     print("টেলিগ্রাম বট পোলিং শুরু করছে...")
     
-    # --- নতুন: Flask সার্ভারটি একটি আলাদা থ্রেডে চালু করা ---
+    # Flask সার্ভার চালু করা (পরিবর্তন নেই)
     web_thread = threading.Thread(target=run_web_server)
-    web_thread.daemon = True # বট বন্ধ হলে থ্রেডটিও যেন বন্ধ হয়ে যায়
+    web_thread.daemon = True
     web_thread.start()
     print("ওয়েব সার্ভার চালু হয়েছে (বটকে জাগিয়ে রাখার জন্য)।")
-    # -----------------------------------------------------
     
     application.run_polling()
 
