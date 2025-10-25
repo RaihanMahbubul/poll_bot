@@ -134,7 +134,7 @@ def get_questions_from_ai(text, ai_model):
     {text}
     ---
     
-    JSON আউটপুট উদাহরণ:
+    JSON আউটুট উদাহরণ:
     [
       {{
         "question": "বাংলাদেশের রাজধানীর নাম কি?",
@@ -233,24 +233,45 @@ async def start_command(update: telegram.Update, context: ContextTypes.DEFAULT_T
         parse_mode=ParseMode.HTML # <--!!! HTML-এ পরিবর্তন করা হয়েছে !!!
     )
 
+# ---!!! /setchannel কমান্ড হ্যান্ডলার (এটি ডিলিট হয়ে গিয়েছিল) !!!---
+async def set_channel(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    clear_user_state(context.user_data)
+    if not context.args:
+        await update.message.reply_text("⚠️ ব্যবহার: /setchannel <channel_id_or_@username>")
+        return
+    target_channel = context.args[0]
+    save_target_channel_to_db(user_id, target_channel) # ডাটাবেসে সেভ
+    await update.message.reply_text(
+        f"✅ টার্গেট চ্যানেল সফলভাবে সেট করা হয়েছে: {target_channel}\n"
+        "(এই সেটিংটি এখন স্থায়ীভাবে সেভ থাকবে)"
+    )
+
+# --- /cancel কমান্ড হ্যান্ডলার ---
+async def cancel_quiz(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
+    """পেন্ডিং থাকা কুইজ পোস্ট বা টেক্সট বাফার বাতিল করে।"""
+    clear_user_state(context.user_data)
+    await update.message.reply_text("বর্তমান কাজটি বাতিল করা হয়েছে। আপনি নতুন প্রশ্ন পাঠাতে পারেন।")
+
+
 # ---!!! /help কমান্ড হ্যান্ডলার !!!---
 async def help_command(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /help কমান্ডে কমান্ডগুলোর একটি সংক্ষিপ্ত তালিকা দেখায়।
     """
     help_text = """
-ℹ️ **[SOT] পোল বট - হেল্প মেনু**
+ℹ️ <b>[SOT] পোল বট - হেল্প মেনু</b>
 
 এখানে বটের প্রধান কমান্ডগুলো দেওয়া হলো:
 
-* `/start` - বট সম্পর্কে বিস্তারিত নির্দেশনা ও সম্পূর্ণ গাইডলাইন দেখায়।
-* `/setchannel <ID>` - কোন চ্যানেলে পোল পোস্ট করতে চান তা সেট করে। (যেমন: `/setchannel -100123...`)
-* `/cancel` - কোনো চলমান কাজ (যেমন: সূচনা বার্তার জন্য অপেক্ষা) বাতিল করে।
-* `/help` - এই হেল্প মেসেজটি দেখায়।
+• <code>/start</code> - বট সম্পর্কে বিস্তারিত নির্দেশনা ও সম্পূর্ণ গাইডলাইন দেখায়।
+• <code>/setchannel &lt;ID&gt;</code> - কোন চ্যানেলে পোল পোস্ট করতে চান তা সেট করে। (যেমন: <code>/setchannel -100123...</code>)
+• <code>/cancel</code> - কোনো চলমান কাজ (যেমন: সূচনা বার্তার জন্য অপেক্ষা) বাতিল করে।
+• <code>/help</code> - এই হেল্প মেসেজটি দেখায়।
 """
     await update.message.reply_text(
         help_text,
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=ParseMode.HTML # <-- এটিকেও HTML করা হলো
     )
 # ------------------------------------
 
@@ -464,9 +485,9 @@ def main():
 
     # --- হ্যান্ডলার সেকশন ---
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("setchannel", set_channel))
+    application.add_handler(CommandHandler("setchannel", set_channel)) # <--!!! ফিক্সড !!!
     application.add_handler(CommandHandler("cancel", cancel_quiz))
-    application.add_handler(CommandHandler("help", help_command)) # <-- /help কমান্ড
+    application.add_handler(CommandHandler("help", help_command)) 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     # ------------------------------------
 
