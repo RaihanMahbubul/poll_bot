@@ -1,9 +1,9 @@
 import telegram
 from telegram.ext import (
-    Application, 
-    CommandHandler, 
-    MessageHandler, 
-    filters, 
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
     ContextTypes,
 )
 from telegram.ext._jobqueue import Job
@@ -16,6 +16,7 @@ import psycopg2
 from urllib.parse import urlparse
 from flask import Flask
 import threading
+import traceback # <-- নতুন ইম্পোর্ট (বিস্তারিত এরর দেখার জন্য)
 
 # -----------------------------------------------------------------
 # --- টোকেন বা কী এখানে লোড করা হচ্ছে না ---
@@ -46,12 +47,12 @@ def get_db_connection():
         # ভেরিয়েবলটি এখানে সরাসরি পড়া হচ্ছে
         db_url = os.environ.get("DATABASE_URL")
         if not db_url:
-            print("ডাটাবেস কানেকশনে সমস্যা: DATABASE_URL খুঁজে পাওয়া যায়নি।")
+            print("❌ ডাটাবেস কানেকশনে সমস্যা: DATABASE_URL খুঁজে পাওয়া যায়নি।")
             return None
         conn = psycopg2.connect(db_url)
         return conn
     except Exception as e:
-        print(f"ডাটাবেস কানেকশনে সমস্যা: {e}")
+        print(f"❌ ডাটাবেস কানেকশনে সমস্যা: {e}")
         return None
 
 # --- নতুন ফাংশন: ডাটাবেস টেবিল তৈরি ---
@@ -59,9 +60,9 @@ def init_db():
     """বট চালু হওয়ার সময় এই ফাংশন ডাটাবেস টেবিল তৈরি করবে।"""
     conn = get_db_connection()
     if conn is None:
-        print("ডাটাবেস ইনিশিয়ালাইজ করা যাচ্ছে না।")
+        print("❌ ডাটাবেস ইনিশিয়ালাইজ করা যাচ্ছে না।")
         return
-        
+
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -71,9 +72,9 @@ def init_db():
                 );
             """)
             conn.commit()
-        print("ডাটাবেস টেবিল (user_settings) সফলভাবে চেক/তৈরি করা হয়েছে।")
+        print("✅ ডাটাবেস টেবিল (user_settings) সফলভাবে চেক/তৈরি করা হয়েছে।")
     except Exception as e:
-        print(f"টেবিল তৈরিতে সমস্যা: {e}")
+        print(f"❌ টেবিল তৈরিতে সমস্যা: {e}")
     finally:
         if conn:
             conn.close()
@@ -82,7 +83,7 @@ def init_db():
 def get_target_channel_from_db(user_id: int) -> str | None:
     conn = get_db_connection()
     if conn is None: return None
-    
+
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT target_channel FROM user_settings WHERE user_id = %s", (user_id,))
@@ -91,13 +92,13 @@ def get_target_channel_from_db(user_id: int) -> str | None:
                 return result[0] # target_channel
             return None
     except Exception as e:
-        print(f"চ্যানেল আইডি পড়াতে সমস্যা: {e}")
+        print(f"❌ চ্যানেল আইডি পড়াতে সমস্যা: {e}")
         return None
     finally:
         if conn:
             conn.close()
 
-# --- নতুন ফাংশল: ডাটাবেসে চ্যানেল আইডি সেভ করা ---
+# --- নতুন ফাংশন: ডাটাবেসে চ্যানেল আইডি সেভ করা ---
 def save_target_channel_to_db(user_id: int, target_channel: str):
     conn = get_db_connection()
     if conn is None: return
@@ -112,13 +113,13 @@ def save_target_channel_to_db(user_id: int, target_channel: str):
             """, (user_id, target_channel))
             conn.commit()
     except Exception as e:
-        print(f"চ্যানেল আইডি সেভ করতে সমস্যা: {e}")
+        print(f"❌ চ্যানেল আইডি সেভ করতে সমস্যা: {e}")
     finally:
         if conn:
             conn.close()
 
 # --- AI দিয়ে প্রশ্ন জেনারেট করার ফাংশন (ডাইনামিক সাফিক্স সহ) ---
-def get_questions_from_ai(text, ai_model): 
+def get_questions_from_ai(text, ai_model):
     # প্রম্পট আপডেট করা হয়েছে "suffix" নামে নতুন একটি ফিল্ড যোগ করার জন্য
     prompt = f"""
     তুমি একজন দক্ষ টেলিগ্রাম বট। তোমার কাজ হলো নিচের টেক্সট থেকে শুধুমাত্র মাল্টিপল চয়েস প্রশ্ন (MCQ) বের করা।
@@ -133,8 +134,8 @@ def get_questions_from_ai(text, ai_model):
     ---
     {text}
     ---
-    
-    JSON আউটুট উদাহরণ:
+
+    JSON আউটপুট উদাহরণ:
     [
       {{
         "question": "বাংলাদেশের রাজধানীর নাম কি?",
@@ -155,12 +156,15 @@ def get_questions_from_ai(text, ai_model):
     try:
         response = ai_model.generate_content(prompt)
         if not response.parts:
-            print(f"AI রেসপন্স ব্লকড। কারণ: {response.prompt_feedback}")
+            print(f"⚠️ AI রেসপন্স ব্লকড। কারণ: {response.prompt_feedback}")
             return None
         json_data = json.loads(response.text)
         return json_data
     except Exception as e:
-        print(f"AI বা JSON পার্সিং-এ অজানা সমস্যা: {e}") 
+        print(f"❌ AI বা JSON পার্সিং-এ অজানা সমস্যা: {e}")
+        # --- বিস্তারিত এরর দেখানোর জন্য ---
+        traceback.print_exc()
+        # -------------------------------
         return None
 
 # --- টুল ফাংশন: স্টেট রিসেট করার জন্য ---
@@ -170,18 +174,22 @@ def clear_user_state(user_data: dict):
     if 'pending_quiz_data' in user_data: del user_data['pending_quiz_data']
     job_to_remove: Job | None = user_data.get('buffer_job')
     if job_to_remove:
-        job_to_remove.remove() # টাইমারটি বন্ধ করা
-        del user_data['buffer_job']
+        try:
+            job_to_remove.remove() # টাইমারটি বন্ধ করা
+        except Exception as e:
+            print(f"⚠️ টাইমার রিমুভ করতে সমস্যা: {e}") # যদি জব আগে থেকেই রিমুভ হয়ে গিয়ে থাকে
+        if 'buffer_job' in user_data: # ডাবল চেক
+             del user_data['buffer_job']
     if 'text_buffer' in user_data: del user_data['text_buffer']
 
 
-# ---!!! /start কমান্ড হ্যান্ডলার (HTML ফরম্যাটে ফিক্স করা) !!!---
+# --- /start কমান্ড হ্যান্ডলার (HTML ফরম্যাটে ফিক্স করা) ---
 async def start_command(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     """
     নতুন ব্যবহারকারীকে /start কমান্ডে বিস্তারিত নির্দেশনা দেখায়।
     """
     clear_user_state(context.user_data) # স্টেট রিসেট করা
-    
+
     # --- HTML ফরম্যাটে পরিবর্তন করা হয়েছে ---
     instructions = """
 👋 আসসালামু আলাইকুম! <b>[SOT] পোল বট-এ আপনাকে স্বাগতম।</b>
@@ -227,13 +235,13 @@ async def start_command(update: telegram.Update, context: ContextTypes.DEFAULT_T
 • <code>/cancel</code> - যেকোনো সময় কোনো কাজ (যেমন সূচনা বার্তার জন্য অপেক্ষা) বাতিল করতে এই কমান্ড দিন।
 • <code>/help</code> - কমান্ডগুলোর একটি সংক্ষিপ্ত তালিকা দেখতে এই কমান্ড দিন।
 """
-    
+
     await update.message.reply_text(
         instructions,
         parse_mode=ParseMode.HTML # <--!!! HTML-এ পরিবর্তন করা হয়েছে !!!
     )
 
-# ---!!! /setchannel কমান্ড হ্যান্ডলার (এটি ডিলিট হয়ে গিয়েছিল) !!!---
+# --- /setchannel কমান্ড হ্যান্ডলার ---
 async def set_channel(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     clear_user_state(context.user_data)
@@ -251,10 +259,10 @@ async def set_channel(update: telegram.Update, context: ContextTypes.DEFAULT_TYP
 async def cancel_quiz(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     """পেন্ডিং থাকা কুইজ পোস্ট বা টেক্সট বাফার বাতিল করে।"""
     clear_user_state(context.user_data)
-    await update.message.reply_text("বর্তমান কাজটি বাতিল করা হয়েছে। আপনি নতুন প্রশ্ন পাঠাতে পারেন।")
+    await update.message.reply_text("✅ বর্তমান কাজটি বাতিল করা হয়েছে। আপনি নতুন প্রশ্ন পাঠাতে পারেন।")
 
 
-# ---!!! /help কমান্ড হ্যান্ডলার !!!---
+# --- /help কমান্ড হ্যান্ডলার ---
 async def help_command(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /help কমান্ডে কমান্ডগুলোর একটি সংক্ষিপ্ত তালিকা দেখায়।
@@ -284,10 +292,22 @@ async def process_buffered_text(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
     chat_id = job_data['chat_id']
     user_id = job_data['user_id']
-    
+
     # user_data JobQueue থেকে সরাসরি পাওয়া যায় না
-    user_data = context.application.user_data[user_id] 
-    ai_model = context.application.bot_data['ai_model'] # অ্যাপলিকেশন থেকে ai_model লোড করা
+    # ---!!! সেফটি চেক: যদি কোনো কারণে user_data না থাকে !!!---
+    if user_id not in context.application.user_data:
+         print(f"⚠️ process_buffered_text: user_id {user_id} এর জন্য user_data খুঁজে পাওয়া যায়নি।")
+         return # ফাংশন থেকে বের হয়ে যাও
+
+    user_data = context.application.user_data[user_id]
+    ai_model = context.application.bot_data.get('ai_model') # <-- .get() ব্যবহার করা হলো
+
+    # ---!!! সেফটি চেক: যদি ai_model লোড না হয়ে থাকে !!!---
+    if not ai_model:
+        print("❌ process_buffered_text: AI মডেল লোড হয়নি। বট রিস্টার্ট করুন।")
+        await context.bot.send_message(chat_id=chat_id, text="❌ একটি অভ্যন্তরীণ ত্রুটি হয়েছে (AI মডেল লোড হয়নি)। অনুগ্রহ করে বট এডমিনকে জানান।")
+        clear_user_state(user_data)
+        return
 
     target_channel = get_target_channel_from_db(user_id) # ডাটাবেস থেকে চ্যানেল আইডি পড়া
     if not target_channel:
@@ -296,178 +316,209 @@ async def process_buffered_text(context: ContextTypes.DEFAULT_TYPE):
         return
 
     full_text = "\n".join(user_data.get('text_buffer', []))
-    
+
     # বাফার এবং জব ক্লিয়ার করা
     if 'buffer_job' in user_data: del user_data['buffer_job']
     if 'text_buffer' in user_data: del user_data['text_buffer']
-        
+
     if not full_text:
         await context.bot.send_message(chat_id=chat_id, text="⚠️ টেক্সট খুঁজে পাওয়া যায়নি।")
         clear_user_state(user_data)
         return
 
-    await context.bot.send_message(chat_id=chat_id, text=f"সম্পূর্ণ টেক্সট পেয়েছি ({len(full_text)} অক্ষর)। জেমিনি এআই দিয়ে প্রসেস করছি... 🤖")
-    
+    await context.bot.send_message(chat_id=chat_id, text=f"✅ সম্পূর্ণ টেক্সট পেয়েছি ({len(full_text)} অক্ষর)। জেমিনি এআই দিয়ে প্রসেস করছি... 🤖")
+
     questions_data = get_questions_from_ai(full_text, ai_model) # ai_model পাস করা
-    
+
     if not questions_data or not isinstance(questions_data, list) or len(questions_data) == 0:
-        await context.bot.send_message(chat_id=chat_id, text="দুঃখিত, AI প্রশ্ন তৈরি করতে ব্যর্থ হয়েছে বা কোনো প্রশ্ন খুঁজে পায়নি।")
+        await context.bot.send_message(chat_id=chat_id, text="❌ দুঃখিত, AI প্রশ্ন তৈরি করতে ব্যর্থ হয়েছে বা কোনো প্রশ্ন খুঁজে পায়নি। ইনপুট টেক্সট চেক করুন।")
         clear_user_state(user_data)
         return
-    
+
     # প্রশ্ন সফল হলে, সেভ করা এবং সূচনার জন্য বলা
     user_data['pending_quiz_data'] = questions_data
-    user_data['CONV_STATE'] = STATE_AWAITING_INTRO 
+    user_data['CONV_STATE'] = STATE_AWAITING_INTRO
     await context.bot.send_message(
-        chat_id=chat_id, 
+        chat_id=chat_id,
         text=f"✅ {len(questions_data)} টি প্রশ্ন সফলভাবে প্রসেস করা হয়েছে।\n\n"
              "➡️ **এখন এই কুইজের জন্য একটি সূচনা বার্তা (intro text) পাঠান।**\n\n"
              "(অথবা /cancel লিখে বাতিল করুন)"
     )
 
 
-# ---!!! মূল টেক্সট মেসেজ হ্যান্ডলার (স্টেট ম্যানেজমেন্ট) !!!---
+# ---!!! মূল টেক্সট মেসেজ হ্যান্ডলার (স্টেট ম্যানেজমেন্ট + এরর রিপোর্টিং) !!!---
 async def handle_text(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     chat_id = update.message.chat_id
     user = update.effective_user
-    
+
     # ইউজারের বর্তমান অবস্থা (state) চেক করা
     current_state = context.user_data.get('CONV_STATE', STATE_IDLE)
-    
+
     # --- ধাপ ১: যদি বট সূচনার জন্য অপেক্ষা করে ---
     if current_state == STATE_AWAITING_INTRO:
-        
+
         intro_text = user_message # এই মেসেজটিই হলো সূচনা বার্তা
         target_channel = get_target_channel_from_db(user.id) # ডাটাবেস থেকে চ্যানেল আইডি পড়া
         questions_data = context.user_data.get('pending_quiz_data')
-        
+
         if not target_channel or not questions_data:
-            await context.bot.send_message(chat_id=chat_id, text="⚠️ একটি ত্রুটি হয়েছে। অনুগ্রহ করে /cancel করে আবার শুরু করুন।")
+            await context.bot.send_message(chat_id=chat_id, text="⚠️ একটি ত্রুটি হয়েছে (চ্যানেল বা প্রশ্ন ডেটা পাওয়া যায়নি)। অনুগ্রহ করে /cancel করে আবার শুরু করুন।")
             clear_user_state(context.user_data)
             return
 
-        await context.bot.send_message(chat_id=chat_id, text=f" সূচনা বার্তা পেয়েছি। '{target_channel}'-এ পোস্ট করা হচ্ছে...")
+        await context.bot.send_message(chat_id=chat_id, text=f"✅ সূচনা বার্তা পেয়েছি। '{target_channel}'-এ পোস্ট করা হচ্ছে...")
         count = 0
         errors = 0
-        
+        failed_polls_info = [] # <--!!! নতুন: ব্যর্থ পোলগুলোর তথ্য রাখার জন্য লিস্ট !!!---
+
         try:
             # --- প্রথমে কাস্টম সূচনা বার্তাটি পোস্ট করা ---
             await context.bot.send_message(chat_id=target_channel, text=intro_text)
-            
+
             # --- তারপর পোলগুলো পোস্ট করা ---
             for poll_data in questions_data:
+                formatted_question = "Error: Question not formatted" # ডিফল্ট মান
                 try:
                     # ---!!! ডাইনামিক লিগ্যাসি যোগ করা !!!---
-                    original_question = poll_data['question']
+                    original_question = poll_data.get('question', 'Unknown Question') # .get() ব্যবহার
                     dynamic_suffix = poll_data.get('suffix') # AI থেকে পাওয়া সাফিক্স (null হতে পারে)
-                    
+
                     static_prefix = "[SOT]" # <-- আপনার স্বয়ংক্রিয় প্রিফিক্স
-                    
+
                     # \u200B হলো একটি জিরো-উইডথ স্পেস (সুন্দর দেখানোর জন্য)
                     formatted_question = f"{static_prefix} \u200B {original_question}"
-                    
+
                     # যদি সাফিক্স থাকে (null না হয়), তবেই সেটি যোগ করা
                     if dynamic_suffix:
                         formatted_question = f"{formatted_question} \u200B {dynamic_suffix}"
-                    
                     # -----------------------------------------------
 
                     # টেলিগ্রাম পোলের প্রশ্নের অক্ষর সীমা চেক করা (৩০০ অক্ষর)
                     if len(formatted_question) > 300:
                         # যদি খুব লম্বা হয়, লিগ্যাসি ছাড়া শুধু প্রশ্নটি পাঠানো
+                        print(f"⚠️ প্রশ্নটি ৩০০ অক্ষরের বেশি ({len(formatted_question)}), লিগ্যাসি বাদ দেওয়া হচ্ছে: {original_question[:50]}...")
                         if len(original_question) > 300:
                             formatted_question = original_question[:300]
                         else:
                             formatted_question = original_question
                     # -----------------------------------------------
 
+                    # ---!!! অপশন এবং ইনডেক্স চেক করা !!!---
+                    options = poll_data.get('options')
+                    correct_option_index = poll_data.get('correct_option_index')
+
+                    if not options or not isinstance(options, list) or len(options) < 2 or len(options) > 10:
+                        raise ValueError(f"অবৈধ অপশন সংখ্যা ({len(options) if options else 0})")
+                    if correct_option_index is None or not isinstance(correct_option_index, int) or correct_option_index < 0 or correct_option_index >= len(options):
+                        raise ValueError(f"অবৈধ সঠিক অপশন ইনডেক্স ({correct_option_index}), অপশন সংখ্যা: {len(options)}")
+                    #------------------------------------------
+
+
                     await context.bot.send_poll(
                         chat_id=target_channel,
                         question=formatted_question, # <-- এখানে পরিবর্তিত প্রশ্নটি ব্যবহার করা
-                        options=poll_data['options'],
+                        options=options,
                         type=telegram.Poll.QUIZ,
-                        correct_option_id=poll_data['correct_option_index'],
-                        explanation=poll_data.get('explanation') 
+                        correct_option_id=correct_option_index,
+                        explanation=poll_data.get('explanation')
                     )
                     count += 1
                     await asyncio.sleep(1) # টেলিগ্রামের রেট লিমিট এড়ানোর জন্য
+
                 except Exception as e:
-                    print(f"পোল পাঠাতে সমস্যা (চ্যানেল {target_channel}): {e}")
+                    print(f"❌ পোল পাঠাতে সমস্যা (চ্যানেল {target_channel}): {e}")
                     errors += 1
-        
+                    # ---!!! নতুন: ব্যর্থ পোলের তথ্য যোগ করা !!!---
+                    failed_polls_info.append({
+                        "question": original_question[:100] + ('...' if len(original_question) > 100 else ''), # প্রশ্ন সংক্ষিপ্ত করা
+                        "error": str(e) # এররের কারণ
+                    })
+                    # -----------------------------------------
+
         except Exception as e:
             # যদি চ্যানেল আইডি ভুল হয় বা বট অ্যাডমিন না থাকে
-            print(f"চ্যানেল {target_channel}-এ মেসেজ পাঠানো যায়নি: {e}")
-            await context.bot.send_message(chat_id=chat_id, text=f"⚠️ চ্যানেল '{target_channel}'-এ পোস্ট করতে মারাত্মক সমস্যা হয়েছে: {e}")
+            print(f"❌ চ্যানেল {target_channel}-এ মেসেজ পাঠানো যায়নি: {e}")
+            await context.bot.send_message(chat_id=chat_id, text=f"❌ চ্যানেল '{target_channel}'-এ পোস্ট করতে মারাত্মক সমস্যা হয়েছে। আইডি/বট পারমিশন চেক করুন: {e}")
             clear_user_state(context.user_data)
             return
 
         # সফলভাবে পোস্ট করার পর স্টেট রিসেট করা
         clear_user_state(context.user_data)
-        feedback_message = f"সফলভাবে চ্যানেল '{target_channel}'-এ {count} টি পোল পোস্ট করা হয়েছে!"
-        if errors > 0: feedback_message += f"\n{errors} টি পোস্টে সমস্যা হয়েছে।"
+
+        # ---!!! নতুন: বিস্তারিত ফিডব্যাক মেসেজ !!!---
+        feedback_message = f"✅ সফলভাবে চ্যানেল '{target_channel}'-এ {count} টি পোল পোস্ট করা হয়েছে।"
+        if errors > 0:
+            feedback_message += f"\n\n⚠️ কিন্তু {errors} টি পোল পোস্ট করতে সমস্যা হয়েছে:"
+            for i, failed in enumerate(failed_polls_info):
+                 # টেলিগ্রাম মেসেজের অক্ষর সীমা ৪০০০ এর কাছাকাছি, তাই খুব বেশি এরর দেখানো যাবে না
+                 if len(feedback_message) < 3800:
+                      feedback_message += f"\n {i+1}. প্রশ্ন: \"{failed['question']}\"\n    কারণ: {failed['error'][:100]}" # এরর সংক্ষিপ্ত করা
+                 else:
+                      feedback_message += "\n... (আরও এরর আছে)"
+                      break # মেসেজ খুব বড় হয়ে গেলে লুপ থামিয়ে দাও
+        # -------------------------------------------
         await context.bot.send_message(chat_id=chat_id, text=feedback_message)
 
-    
+
     # --- ধাপ ২: যদি বট নতুন প্রশ্নের জন্য অপেক্ষা করে (IDLE) (বাফারিং লজিক) ---
     elif current_state == STATE_IDLE:
-        
+
         target_channel = get_target_channel_from_db(user.id) # ডাটাবেস থেকে চ্যানেল আইডি পড়া
         if not target_channel:
             await context.bot.send_message(chat_id=chat_id, text="⚠️ টার্গেট চ্যানেল সেট করা নেই। /setchannel ব্যবহার করুন।")
             return
 
         # --- বাফারিং লজিক শুরু ---
-        
+
         # যদি কোনো টাইমার আগে থেকেই চালু থাকে (অর্থাৎ এটি একটি স্প্লিট মেসেজ)
         if 'buffer_job' in context.user_data:
             context.user_data['buffer_job'].remove() # পুরানো টাইমার বাতিল
-        
+
         # টেক্সট বাফারে এই মেসেজটি যোগ করা
         if 'text_buffer' not in context.user_data:
             context.user_data['text_buffer'] = []
             # এটিই প্রথম মেসেজ, তাই ইউজারকে জানানো
-            await context.bot.send_message(chat_id=chat_id, text="টেক্সট পেয়েছি... (আরও টেক্সট এলে সেগুলোর জন্য ৩ সেকেন্ড অপেক্ষা করছি)")
-            
+            await context.bot.send_message(chat_id=chat_id, text="⏳ টেক্সট পেয়েছি... (আরও টেক্সট এলে সেগুলোর জন্য ৩ সেকেন্ড অপেক্ষা করছি)")
+
         context.user_data['text_buffer'].append(user_message)
-        
+
         # একটি নতুন টাইমার সেট করা
         new_job = context.job_queue.run_once(
-            process_buffered_text, 
-            TEXT_BUFFER_DELAY, 
+            process_buffered_text,
+            TEXT_BUFFER_DELAY,
             data={'chat_id': chat_id, 'user_id': user.id},
             name=f"buffer-{user.id}"
         )
         context.user_data['buffer_job'] = new_job
         # --- বাফারিং লজিক শেষ ---
-        
+
 
 # ---!!! বট চালু করার মেইন ফাংশন (Race Condition ফিক্সড) !!!---
 def main():
-    print("বট চালু হচ্ছে...")
-    
+    print("⏳ বট চালু হচ্ছে...")
+
     # --- ভেরিয়েবলগুলো এখন main() এর ভেতরে লোড হচ্ছে ---
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-    DATABASE_URL = os.environ.get("DATABASE_URL") 
+    DATABASE_URL = os.environ.get("DATABASE_URL")
 
     # --- ভেরিয়েবল চেক ---
     if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY or not DATABASE_URL:
-        print("---!!! ERROR: টোকেন বা এপিআই কী সেট করা হয়নি !!!---")
-        print("Render-এর 'Environment' ট্যাবে ভেরিয়েবলগুলো চেক করুন।")
+        print("---❌ ERROR: টোকেন বা এপিআই কী সেট করা হয়নি !!!---")
+        print("Render-এর 'Environment' ট্যাবে ভেরিয়েবলগুলো সঠিকভাবে সেট করা আছে কিনা চেক করুন।")
         return # বট বন্ধ করে দাও
 
-    print("টোকেন এবং কী সফলভাবে লোড হয়েছে।")
+    print("✅ টোকেন এবং কী সফলভাবে লোড হয়েছে।")
 
     # --- জেমিনি এআই এখন এখানে কনফিগার হচ্ছে ---
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         generation_config = genai.GenerationConfig(response_mime_type="application/json")
         ai_model = genai.GenerativeModel('gemini-flash-latest', generation_config=generation_config)
-        print("Gemini AI সফলভাবে কনফিগার করা হয়েছে (JSON মোডে)।")
+        print("✅ Gemini AI সফলভাবে কনফিগার করা হয়েছে (JSON মোডে)।")
     except Exception as e:
-        print(f"Gemini AI কনফিগারেশনে সমস্যা: {e}")
+        print(f"❌ Gemini AI কনফিগারেশনে সমস্যা: {e}")
         return
 
     # --- ডাটাবেস চালু করা ---
@@ -478,28 +529,29 @@ def main():
         .token(TELEGRAM_BOT_TOKEN)
         .build()
     )
-    
+
     # --- ai_model কে অ্যাপ্লিকেশন কনটেক্সটে সেভ করা ---
     # যাতে process_buffered_text ফাংশনটি এটি ব্যবহার করতে পারে
     application.bot_data['ai_model'] = ai_model
 
     # --- হ্যান্ডলার সেকশন ---
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("setchannel", set_channel)) # <--!!! ফিক্সড !!!
+    application.add_handler(CommandHandler("setchannel", set_channel))
     application.add_handler(CommandHandler("cancel", cancel_quiz))
-    application.add_handler(CommandHandler("help", help_command)) 
+    application.add_handler(CommandHandler("help", help_command)) # <-- /help কমান্ড
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     # ------------------------------------
 
-    print("টেলিগ্রাম বট পোলিং শুরু করছে...")
-    
+    print("⏳ টেলিগ্রাম বট পোলিং শুরু করছে...")
+
     # Flask সার্ভার চালু করা (বটকে জাগিয়ে রাখার জন্য)
     web_thread = threading.Thread(target=run_web_server)
     web_thread.daemon = True
     web_thread.start()
-    print("ওয়েব সার্ভার চালু হয়েছে (বটকে জাগিয়ে রাখার জন্য)।")
-    
+    print("✅ ওয়েব সার্ভার চালু হয়েছে (বটকে জাগিয়ে রাখার জন্য)।")
+
     application.run_polling()
+    print("ℹ️ বট পোলিং বন্ধ হয়েছে।") # যদি কোনো কারণে run_polling() শেষ হয়ে যায়
 
 if __name__ == "__main__":
     main()
